@@ -1,9 +1,5 @@
 from fastapi import FastAPI, UploadFile, File, Form
 from fastapi.middleware.cors import CORSMiddleware
-import face_recognition
-import numpy as np
-import io
-import json
 import sqlite3
 import cloudinary
 import cloudinary.uploader
@@ -25,7 +21,7 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-# SQLite Database for Encodings
+# SQLite Database for Encodings & Events
 conn = sqlite3.connect("radhe_events.db", check_same_thread=False)
 cursor = conn.cursor()
 cursor.execute('''
@@ -33,7 +29,7 @@ cursor.execute('''
         id INTEGER PRIMARY KEY AUTOINCREMENT,
         event_id TEXT,
         image_url TEXT,
-        encoding TEXT
+        descriptor TEXT
     )
 ''')
 conn.commit()
@@ -42,58 +38,31 @@ conn.commit()
 def home():
     return {"message": "Radhe Photography AI Server is Live!"}
 
-# 1. Admin: Upload Photo & Save Face Data
-@app.post("/admin/upload-photo")
-async def upload_event_photo(
+# 1. Admin: Save Photo & Face Descriptors
+@app.post("/admin/upload-face-data")
+async def upload_face_data(
     event_id: str = Form(...),
+    descriptor: str = Form(...),
     file: UploadFile = File(...)
 ):
     contents = await file.read()
-    
-    # Cloudinary par upload karna
     upload_result = cloudinary.uploader.upload(
         contents,
         folder=f"radhe_events/{event_id.lower()}"
     )
     img_url = upload_result.get("secure_url")
 
-    # AI se faces detect karna
-    image = face_recognition.load_image_file(io.BytesIO(contents))
-    encodings = face_recognition.face_encodings(image)
-
-    for enc in encodings:
-        enc_str = json.dumps(enc.tolist())
-        cursor.execute(
-            "INSERT INTO faces (event_id, image_url, encoding) VALUES (?, ?, ?)",
-            (event_id.lower(), img_url, enc_str)
-        )
+    cursor.execute(
+        "INSERT INTO faces (event_id, image_url, descriptor) VALUES (?, ?, ?)",
+        (event_id.lower(), img_url, descriptor)
+    )
     conn.commit()
+    return {"status": "success", "image_url": img_url}
 
-    return {"status": "success", "image_url": img_url, "faces_found": len(encodings)}
-
-# 2. Client: Selfie search
-@app.post("/client/search-face")
-async def search_client_face(
-    event_id: str = Form(...),
-    selfie: UploadFile = File(...)
-):
-    contents = await selfie.read()
-    selfie_img = face_recognition.load_image_file(io.BytesIO(contents))
-    selfie_encodings = face_recognition.face_encodings(selfie_img)
-
-    if len(selfie_encodings) == 0:
-        return {"status": "no_face_in_selfie", "photos": []}
-
-    target_encoding = selfie_encodings[0]
-
-    cursor.execute("SELECT image_url, encoding FROM faces WHERE event_id = ?", (event_id.lower(),))
+# 2. Client: Get all face data for matching
+@app.get("/client/event-faces/{event_id}")
+def get_event_faces(event_id: str):
+    cursor.execute("SELECT image_url, descriptor FROM faces WHERE event_id = ?", (event_id.lower(),))
     rows = cursor.fetchall()
-
-    matched_urls = set()
-    for img_url, enc_str in rows:
-        db_encoding = np.array(json.loads(enc_str))
-        matches = face_recognition.compare_faces([db_encoding], target_encoding, tolerance=0.45)
-        if matches[0]:
-            matched_urls.add(img_url)
-
-    return {"status": "success", "photos": list(matched_urls)}
+    data = [{"image_url": r[0], "descriptor": r[1]} for r in rows]
+    return {"status": "success", "faces": data}
