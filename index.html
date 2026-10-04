@@ -1,0 +1,204 @@
+<!DOCTYPE html>
+<html lang="hi">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+  <title>Radhe Photography - AI Face Search</title>
+  <!-- Tailwind CSS & face-api.js CDN -->
+  <script src="https://cdn.tailwindcss.com"></script>
+  <script src="https://cdn.jsdelivr.net/npm/face-api.js@0.22.2/dist/face-api.min.js"></script>
+</head>
+<body class="bg-gray-100 min-h-screen text-gray-800 p-4 md:p-8">
+  <div class="max-w-4xl mx-auto space-y-8">
+    <header class="text-center">
+      <h1 class="text-3xl font-bold text-gray-900">Radhe Photography AI Portal</h1>
+      <p id="modelStatus" class="text-amber-600 mt-2 font-medium">⏳ AI मॉडल्स लोड हो रहे हैं, कृपया रुकें...</p>
+    </header>
+
+    <!-- 1. Admin Section -->
+    <div class="bg-white rounded-xl shadow-md p-6 border border-gray-200">
+      <h2 class="text-xl font-bold mb-4 text-indigo-700">📸 1. एडमिन पैनल (इवेंट फ़ोटो अपलोड करें)</h2>
+      <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
+        <div>
+          <label class="block text-sm font-semibold mb-1">इवेंट ID (उदा. wedding2026):</label>
+          <input id="adminEventId" type="text" placeholder="wedding2026" class="w-full border rounded-lg p-2.5 focus:ring-2 focus:ring-indigo-400 outline-none" />
+        </div>
+        <div>
+          <label class="block text-sm font-semibold mb-1">इवेंट की फ़ोटो चुनें:</label>
+          <input id="adminPhotoInput" type="file" accept="image/*" class="w-full border rounded-lg p-2 focus:ring-2 focus:ring-indigo-400 outline-none" />
+        </div>
+      </div>
+      <button id="uploadBtn" onclick="uploadAdminPhoto()" class="mt-4 w-full bg-indigo-600 hover:bg-indigo-700 text-white font-semibold py-2.5 rounded-lg transition disabled:bg-gray-400" disabled>
+        फ़ोटो प्रोसेस व अपलोड करें
+      </button>
+      <p id="adminStatus" class="text-sm mt-2 text-gray-600 font-medium"></p>
+    </div>
+
+    <!-- 2. Client Section -->
+    <div class="bg-white rounded-xl shadow-md p-6 border border-gray-200">
+      <h2 class="text-xl font-bold mb-4 text-emerald-700">🔍 2. गेस्ट / क्लाइंट सर्च (अपनी फ़ोटो खोजें)</h2>
+      <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
+        <div>
+          <label class="block text-sm font-semibold mb-1">इवेंट ID दर्ज करें:</label>
+          <input id="clientEventId" type="text" placeholder="wedding2026" class="w-full border rounded-lg p-2.5 focus:ring-2 focus:ring-emerald-400 outline-none" />
+        </div>
+        <div>
+          <label class="block text-sm font-semibold mb-1">अपनी सेल्फ़ी या चेहरा चुनें:</label>
+          <input id="clientSelfieInput" type="file" accept="image/*" class="w-full border rounded-lg p-2 focus:ring-2 focus:ring-emerald-400 outline-none" />
+        </div>
+      </div>
+      <button id="searchBtn" onclick="searchMyPhotos()" class="mt-4 w-full bg-emerald-600 hover:bg-emerald-700 text-white font-semibold py-2.5 rounded-lg transition disabled:bg-gray-400" disabled>
+        मेरी फ़ोटो खोजें (AI Face Match)
+      </button>
+      <p id="clientStatus" class="text-sm mt-2 text-gray-600 font-medium"></p>
+
+      <!-- Matched Gallery -->
+      <div id="resultsGrid" class="mt-6 grid grid-cols-2 sm:grid-cols-3 gap-4 hidden"></div>
+    </div>
+  </div>
+
+  <script>
+    const SERVER_URL = "https://radge-ai-server.onrender.com";
+
+    // Load lightweight face-api models from jsDelivr CDN
+    async function initFaceApi() {
+      const MODEL_URL = 'https://cdn.jsdelivr.net/gh/cgarciagl/face-api.js@0.22.2/weights';
+      try {
+        await faceapi.nets.ssdMobilenetv1.loadFromUri(MODEL_URL);
+        await faceapi.nets.faceLandmark68Net.loadFromUri(MODEL_URL);
+        await faceapi.nets.faceRecognitionNet.loadFromUri(MODEL_URL);
+        
+        document.getElementById('modelStatus').innerText = "✅ AI सिस्टम तैयार है!";
+        document.getElementById('modelStatus').className = "text-emerald-600 mt-2 font-medium";
+        document.getElementById('uploadBtn').disabled = false;
+        document.getElementById('searchBtn').disabled = false;
+      } catch (err) {
+        document.getElementById('modelStatus').innerText = "❌ मॉडल्स लोड नहीं हो सके। इंटरनेट कनेक्शन जांचें।";
+        document.getElementById('modelStatus').className = "text-red-600 mt-2 font-medium";
+      }
+    }
+    initFaceApi();
+
+    // 1. Upload Event Photo with Face Descriptors
+    async function uploadAdminPhoto() {
+      const eventId = document.getElementById('adminEventId').value.trim();
+      const fileInput = document.getElementById('adminPhotoInput');
+      const status = document.getElementById('adminStatus');
+
+      if (!eventId || !fileInput.files[0]) {
+        alert("कृपया इवेंट ID भरें और फ़ोटो चुनें!");
+        return;
+      }
+
+      status.innerText = "⏳ चेहरे का विश्लेषण (AI Scan) किया जा रहा है...";
+      const img = await faceapi.bufferToImage(fileInput.files[0]);
+      const detections = await faceapi.detectAllFaces(img).withFaceLandmarks().withFaceDescriptors();
+
+      if (detections.length === 0) {
+        status.innerText = "⚠️ इस फ़ोटो में कोई साफ़ चेहरा नहीं मिला।";
+        return;
+      }
+
+      status.innerText = `⏳ ${detections.length} चेहरे मिले! सर्वर और क्लाउड पर अपलोड हो रहा है...`;
+      
+      const descriptors = detections.map(d => Array.from(d.descriptor));
+      const formData = new FormData();
+      formData.append("event_id", eventId);
+      formData.append("descriptor", JSON.stringify(descriptors));
+      formData.append("file", fileInput.files[0]);
+
+      try {
+        const res = await fetch(`${SERVER_URL}/admin/upload-face-data`, {
+          method: "POST",
+          body: formData
+        });
+        const data = await res.json();
+        if (data.status === "success") {
+          status.innerText = `✅ फ़ोटो सफलतापूर्वक सेव हो गई! (${detections.length} चेहरे रजिस्टर हुए)`;
+          fileInput.value = "";
+        } else {
+          status.innerText = "❌ अपलोड में समस्या आई।";
+        }
+      } catch (e) {
+        status.innerText = "❌ सर्वर कनेक्ट नहीं हो सका: " + e.message;
+      }
+    }
+
+    // 2. Search Photos by Matching Client Face
+    async function searchMyPhotos() {
+      const eventId = document.getElementById('clientEventId').value.trim();
+      const selfieInput = document.getElementById('clientSelfieInput');
+      const status = document.getElementById('clientStatus');
+      const resultsGrid = document.getElementById('resultsGrid');
+
+      if (!eventId || !selfieInput.files[0]) {
+        alert("कृपया इवेंट ID दर्ज करें और सेल्फ़ी अपलोड करें!");
+        return;
+      }
+
+      resultsGrid.innerHTML = "";
+      resultsGrid.classList.add("hidden");
+      status.innerText = "⏳ सेल्फ़ी स्कैन हो रही है...";
+
+      const selfieImg = await faceapi.bufferToImage(selfieInput.files[0]);
+      const selfieDetection = await faceapi.detectSingleFace(selfieImg).withFaceLandmarks().withFaceDescriptor();
+
+      if (!selfieDetection) {
+        status.innerText = "⚠️ सेल्फ़ी में साफ़ चेहरा नहीं दिखा। कृपया अच्छी रोशनी वाली सेल्फ़ी लें।";
+        return;
+      }
+
+      const clientDescriptor = selfieDetection.descriptor;
+      status.innerText = "⏳ सर्वर से इवेंट की तस्वीरें जांची जा रही हैं...";
+
+      try {
+        const res = await fetch(`${SERVER_URL}/client/event-faces/${eventId}`);
+        const responseData = await res.json();
+        const records = responseData.faces || [];
+
+        if (records.length === 0) {
+          status.innerText = "⚠️ इस इवेंट ID में कोई फ़ोटो नहीं मिली।";
+          return;
+        }
+
+        const matchedUrls = [];
+        const threshold = 0.55; // फेस मैचिंग सेंसिटिविटी (0.55 - 0.60 आदर्श है)
+
+        records.forEach(item => {
+          const registeredDescriptors = JSON.parse(item.descriptor);
+          let match = false;
+          for (let descArr of registeredDescriptors) {
+            const registeredDesc = new Float32Array(descArr);
+            const distance = faceapi.euclideanDistance(clientDescriptor, registeredDesc);
+            if (distance < threshold) {
+              match = true;
+              break;
+            }
+          }
+          if (match && !matchedUrls.includes(item.image_url)) {
+            matchedUrls.push(item.image_url);
+          }
+        });
+
+        if (matchedUrls.length === 0) {
+          status.innerText = "❌ आपकी कोई मिलती-जुलती फ़ोटो नहीं मिली।";
+        } else {
+          status.innerText = `🎉 बधाई! आपकी ${matchedUrls.length} फ़ोटो मिलीं:`;
+          resultsGrid.classList.remove("hidden");
+          matchedUrls.forEach(url => {
+            const div = document.createElement("div");
+            div.className = "rounded-lg overflow-hidden border shadow-sm group relative";
+            div.innerHTML = `
+              <img src="${url}" class="w-full h-48 object-cover group-hover:scale-105 transition duration-300" />
+              <a href="${url}" target="_blank" download class="absolute bottom-2 right-2 bg-black/70 hover:bg-black text-white text-xs px-2.5 py-1 rounded">डाउनलोड</a>
+            `;
+            resultsGrid.appendChild(div);
+          });
+        }
+      } catch (err) {
+        status.innerText = "❌ खोज पूरी नहीं हो सकी: " + err.message;
+      }
+    }
+  </script>
+</body>
+</html>
